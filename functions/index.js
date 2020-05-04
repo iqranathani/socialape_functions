@@ -30,7 +30,7 @@ admin.initializeApp({
 
   const db = admin.firestore()
 
-
+//GET SCREAM
 
 app.get('/screams',(request,response) => {
   db.collection('screams').orderBy('createdAt','desc').get()
@@ -50,15 +50,45 @@ app.get('/screams',(request,response) => {
     console.error(err))
 })
 
-app.post('/scream',(request, response) => {
-   
+
+//AUTHORIZATION
+const FBAuth = (req,res,next)=>{
+    let idToken;
+    if(req.headers.authorization && req.headers.authorization.startsWith('Bearer ')){
+        idToken = req.headers.authorization.split('Bearer ')[1];
+    }else{
+        console.error("No token found")
+        return res.status(403).json({error:'Unauthorized'})
+    }
+    admin.auth().verifyIdToken(idToken)
+    .then(decodedToken=>{
+        req.user= decodedToken;
+        console.log("decoded tokenm",decodedToken);
+        return db.collection('users').where('userId','==',req.user.uid).limit(1).get();
+    }).then(data=>{
+        console.log("data",data)
+        req.user.handle = data.docs[0].data().handle;
+        return next(); 
+    }).catch(err=>{
+        console.error('Error while verifying token',err);
+        return res.status(403).json(err)
+
+    })
+}
+
+
+//create scream
+app.post('/createScream',FBAuth,(request, response) => {
+   if(request.body.body.trim() === ''){
+       return res.status(403).json(err); 
+   }
         const newScream={
             body: request.body.body,
-            userHandler:request.body.userHandler,
+            userHandler:request.user.handle,
             createdAt:new Date().toISOString()
         };
 
-        admin.firestore().collection('screams').add(newScream)
+        db.collection('screams').add(newScream)
         .then(doc => {
             response.json({ message:`document ${doc.id} created successfuly`})
         })
@@ -149,8 +179,8 @@ app.post('/scream',(request, response) => {
            password:request.body.password
        }
        let errors={}
-       if(isEmpty(user.email)) errors.email ='Must not be empty'
-       if(isEmpty(user.password)) errors.password ='Must not be empty'
+       if(isEmpty(user.email)) errors.email ='Must not be empty';
+       if(isEmpty(user.password)) errors.password ='Must not be empty';
        if(Object.keys(errors).length > 0 ) return response.status(400).json(errors)
 
        firebase.auth().signInWithEmailAndPassword(user.email,user.password)
@@ -159,8 +189,10 @@ app.post('/scream',(request, response) => {
        }).then((token)=>{
            return response.json({token});
        }).catch(err=>{
-           console.error(err);
-           return response.status(500).json({error:err.code})
+        console.error(err);
+           if(err.code==='auth/wrong-password'){
+               return response.status(403).json({general:'Wrong credentials, please try again'})
+           }else return response.status(500).json({error:err.code})
        })
    })
 exports.api = functions.https.onRequest(app)
